@@ -118,9 +118,17 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # Ensure binary compatibility on GitHub runner: pandas 2.0.3 with numpy 1.26.x
-          pip install --no-cache-dir --force-reinstall "numpy==1.26.4" "pandas==2.0.3"
-          pip install --no-cache-dir --force-reinstall -r Crawl4NK/requirements.txt
+          # Pin numpy<2 for pandas 2.0.3 binary compatibility on GitHub runner.
+          cat > constraints.txt << 'EOF'
+          numpy==1.26.4
+          pandas==2.0.3
+          EOF
+          pip install --no-cache-dir -c constraints.txt -r Crawl4NK/requirements.txt
+          python - << 'PY'
+          import numpy, pandas
+          print("numpy", numpy.__version__)
+          print("pandas", pandas.__version__)
+          PY
 
       - name: Generate Crawl4NK config
         shell: bash
@@ -365,8 +373,8 @@ jobs:
           set -euo pipefail
 
           if [ -z "${MAIL_FROM:-}" ] || [ -z "${SMTP_PASSWORD:-}" ]; then
-            echo "Missing required mail secrets: EMAIL_ADDRESS, EMAIL_PASSWORD"
-            exit 1
+            echo "Missing mail secrets (EMAIL_ADDRESS/EMAIL_PASSWORD). Skip sending email."
+            exit 0
           fi
 
           cat > main.go << 'EOF'
