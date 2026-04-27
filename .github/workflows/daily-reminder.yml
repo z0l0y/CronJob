@@ -2,7 +2,6 @@ name: Daily Task Reminder
 
 on:
   schedule:
-    # Every day at 00:30 UTC (08:30 China Standard Time)
     - cron: "30 0 * * *"
   workflow_dispatch:
     inputs:
@@ -119,7 +118,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install -r Crawl4NK/requirements.txt
+          # Ensure binary compatibility on GitHub runner: pandas 2.0.3 with numpy 1.26.x
+          pip install --no-cache-dir --force-reinstall "numpy==1.26.4" "pandas==2.0.3"
+          pip install --no-cache-dir --force-reinstall -r Crawl4NK/requirements.txt
 
       - name: Generate Crawl4NK config
         shell: bash
@@ -343,16 +344,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache: false
 
       - name: Send crawl result mail with Go
         if: always()
+        continue-on-error: true
         shell: bash
         env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_FROM: ${{ secrets.EMAIL_ADDRESS }}
+          SMTP_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           CRAWL_STATUS: ${{ steps.crawl.outcome }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
@@ -364,9 +364,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${SMTP_HOST:-}" ] || [ -z "${SMTP_PORT:-}" ] || [ -z "${SMTP_USERNAME:-}" ] || [ -z "${SMTP_PASSWORD:-}" ] || [ -z "${MAIL_FROM:-}" ] || [ -z "${MAIL_TO:-}" ]; then
-            echo "Missing required mail secrets."
-            echo "Please set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, MAIL_FROM, MAIL_TO in repository secrets."
+          if [ -z "${MAIL_FROM:-}" ] || [ -z "${SMTP_PASSWORD:-}" ]; then
+            echo "Missing required mail secrets: EMAIL_ADDRESS, EMAIL_PASSWORD"
             exit 1
           fi
 
@@ -385,6 +384,11 @@ jobs:
             "path/filepath"
             "strings"
             "time"
+          )
+
+          const (
+            smtpHost    = "smtp.qq.com"
+            smtpPort    = "587"
           )
 
           func mustGet(name string) string {
@@ -447,12 +451,13 @@ jobs:
           }
 
           func main() {
-            host := mustGet("SMTP_HOST")
-            port := mustGet("SMTP_PORT")
-            user := mustGet("SMTP_USERNAME")
+            fromAddress := mustGet("MAIL_FROM")
             pass := mustGet("SMTP_PASSWORD")
-            from := mustGet("MAIL_FROM")
-            to := splitRecipients(mustGet("MAIL_TO"))
+            toRaw := strings.TrimSpace(os.Getenv("MAIL_TO"))
+            if toRaw == "" {
+              toRaw = fromAddress
+            }
+            to := splitRecipients(toRaw)
             if len(to) == 0 {
               panic("MAIL_TO has no valid recipients")
             }
@@ -503,7 +508,7 @@ jobs:
             boundary := fmt.Sprintf("BOUNDARY-%d", nowCN.UnixNano())
 
             headers := []string{
-              "From: " + from,
+              "From: " + fromAddress,
               "To: " + strings.Join(to, ", "),
               "Subject: " + subject,
               "MIME-Version: 1.0",
@@ -541,9 +546,9 @@ jobs:
 
             msg.WriteString("--" + boundary + "--\r\n")
 
-            auth := smtp.PlainAuth("", user, pass, host)
-            addr := host + ":" + port
-            if err := smtp.SendMail(addr, auth, from, to, msg.Bytes()); err != nil {
+            auth := smtp.PlainAuth("", fromAddress, pass, smtpHost)
+            addr := smtpHost + ":" + smtpPort
+            if err := smtp.SendMail(addr, auth, fromAddress, to, msg.Bytes()); err != nil {
               panic(err)
             }
 
@@ -551,4 +556,4 @@ jobs:
           }
           EOF
 
-          go run main.go
+          go run main.go || echo "Mail step failed (likely SMTP network issue). Crawl result has been uploaded as artifact."
