@@ -1,0 +1,554 @@
+name: Daily Task Reminder
+
+on:
+  schedule:
+    # Every day at 00:30 UTC (08:30 China Standard Time)
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: "Override keywords, separated by |"
+        required: false
+        default: ""
+      max_pages:
+        description: "Override max_pages"
+        required: false
+        default: ""
+      max_items_per_keyword:
+        description: "Override max_items_per_keyword"
+        required: false
+        default: ""
+      fill_valid_quota:
+        description: "Override fill_valid_quota (true/false)"
+        required: false
+        default: ""
+      search_page_strategy:
+        description: "Override search_page_strategy (bfs/best_first)"
+        required: false
+        default: ""
+      best_first_frontload_pages:
+        description: "Override best_first_frontload_pages"
+        required: false
+        default: ""
+      best_first_explore_stride:
+        description: "Override best_first_explore_stride"
+        required: false
+        default: ""
+      fetch_comments_enabled:
+        description: "Override fetch_comments_enabled (true/false)"
+        required: false
+        default: ""
+      include_comments_column:
+        description: "Override include_comments_column (true/false)"
+        required: false
+        default: ""
+      company_must_in_list:
+        description: "Override company_must_in_list (true/false)"
+        required: false
+        default: ""
+      streaming_process_enabled:
+        description: "Override streaming_process_enabled (true/false)"
+        required: false
+        default: ""
+      metrics_summary_log:
+        description: "Override metrics_summary_log (true/false)"
+        required: false
+        default: ""
+      output_file:
+        description: "Override output_file prefix"
+        required: false
+        default: ""
+      output_formats:
+        description: "Override output_formats, separated by |"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  crawl-and-send-mail:
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_KEYWORDS: "后端 面经"
+      DEFAULT_MAX_PAGES: "5"
+      DEFAULT_MAX_ITEMS_PER_KEYWORD: "10"
+      DEFAULT_FILL_VALID_QUOTA: "false"
+      DEFAULT_SEARCH_PAGE_STRATEGY: "bfs"
+      DEFAULT_BEST_FIRST_FRONTLOAD_PAGES: "3"
+      DEFAULT_BEST_FIRST_EXPLORE_STRIDE: "5"
+      DEFAULT_FETCH_COMMENTS_ENABLED: "false"
+      DEFAULT_INCLUDE_COMMENTS_COLUMN: "false"
+      DEFAULT_COMPANY_MUST_IN_LIST: "true"
+      DEFAULT_STREAMING_PROCESS_ENABLED: "true"
+      DEFAULT_METRICS_SUMMARY_LOG: "false"
+      DEFAULT_OUTPUT_FILE: "nowcoder_data"
+      DEFAULT_OUTPUT_FORMATS: "xlsx|md|txt"
+
+      # Repository variables (recommended)
+      VAR_KEYWORDS: ${{ vars.CRAWL4NK_KEYWORDS }}
+      VAR_MAX_PAGES: ${{ vars.CRAWL4NK_MAX_PAGES }}
+      VAR_MAX_ITEMS_PER_KEYWORD: ${{ vars.CRAWL4NK_MAX_ITEMS_PER_KEYWORD }}
+      VAR_FILL_VALID_QUOTA: ${{ vars.CRAWL4NK_FILL_VALID_QUOTA }}
+      VAR_SEARCH_PAGE_STRATEGY: ${{ vars.CRAWL4NK_SEARCH_PAGE_STRATEGY }}
+      VAR_BEST_FIRST_FRONTLOAD_PAGES: ${{ vars.CRAWL4NK_BEST_FIRST_FRONTLOAD_PAGES }}
+      VAR_BEST_FIRST_EXPLORE_STRIDE: ${{ vars.CRAWL4NK_BEST_FIRST_EXPLORE_STRIDE }}
+      VAR_FETCH_COMMENTS_ENABLED: ${{ vars.CRAWL4NK_FETCH_COMMENTS_ENABLED }}
+      VAR_INCLUDE_COMMENTS_COLUMN: ${{ vars.CRAWL4NK_INCLUDE_COMMENTS_COLUMN }}
+      VAR_COMPANY_MUST_IN_LIST: ${{ vars.CRAWL4NK_COMPANY_MUST_IN_LIST }}
+      VAR_STREAMING_PROCESS_ENABLED: ${{ vars.CRAWL4NK_STREAMING_PROCESS_ENABLED }}
+      VAR_METRICS_SUMMARY_LOG: ${{ vars.CRAWL4NK_METRICS_SUMMARY_LOG }}
+      VAR_OUTPUT_FILE: ${{ vars.CRAWL4NK_OUTPUT_FILE }}
+      VAR_OUTPUT_FORMATS: ${{ vars.CRAWL4NK_OUTPUT_FORMATS }}
+
+    steps:
+      - name: Checkout Crawl4NK
+        uses: actions/checkout@v4
+        with:
+          repository: z0l0y/Crawl4NK
+          ref: master
+          path: Crawl4NK
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Crawl4NK dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r Crawl4NK/requirements.txt
+
+      - name: Generate Crawl4NK config
+        shell: bash
+        env:
+          INPUT_KEYWORDS: ${{ github.event.inputs.keywords }}
+          INPUT_MAX_PAGES: ${{ github.event.inputs.max_pages }}
+          INPUT_MAX_ITEMS_PER_KEYWORD: ${{ github.event.inputs.max_items_per_keyword }}
+          INPUT_FILL_VALID_QUOTA: ${{ github.event.inputs.fill_valid_quota }}
+          INPUT_SEARCH_PAGE_STRATEGY: ${{ github.event.inputs.search_page_strategy }}
+          INPUT_BEST_FIRST_FRONTLOAD_PAGES: ${{ github.event.inputs.best_first_frontload_pages }}
+          INPUT_BEST_FIRST_EXPLORE_STRIDE: ${{ github.event.inputs.best_first_explore_stride }}
+          INPUT_FETCH_COMMENTS_ENABLED: ${{ github.event.inputs.fetch_comments_enabled }}
+          INPUT_INCLUDE_COMMENTS_COLUMN: ${{ github.event.inputs.include_comments_column }}
+          INPUT_COMPANY_MUST_IN_LIST: ${{ github.event.inputs.company_must_in_list }}
+          INPUT_STREAMING_PROCESS_ENABLED: ${{ github.event.inputs.streaming_process_enabled }}
+          INPUT_METRICS_SUMMARY_LOG: ${{ github.event.inputs.metrics_summary_log }}
+          INPUT_OUTPUT_FILE: ${{ github.event.inputs.output_file }}
+          INPUT_OUTPUT_FORMATS: ${{ github.event.inputs.output_formats }}
+
+          CRAWL4NK_COOKIE: ${{ secrets.CRAWL4NK_COOKIE }}
+        run: |
+          set -euo pipefail
+
+          python - << 'PY'
+          import json
+          import os
+
+          def first_non_empty(*values):
+              for v in values:
+                  if v is None:
+                      continue
+                  if str(v).strip() != "":
+                      return str(v).strip()
+              return ""
+
+          def parse_bool(v, default):
+              s = str(v).strip().lower()
+              if s in {"true", "1", "yes", "y", "on"}:
+                  return True
+              if s in {"false", "0", "no", "n", "off"}:
+                  return False
+              return default
+
+          def parse_int(v, default):
+              s = str(v).strip()
+              if s == "":
+                  return default
+              try:
+                  return int(s)
+              except Exception:
+                  return default
+
+          def parse_list(v, default):
+              s = str(v).strip()
+              if s == "":
+                  return default
+              items = [x.strip() for x in s.split("|") if x.strip()]
+              return items if items else default
+
+          cookie = first_non_empty(os.getenv("CRAWL4NK_COOKIE"))
+          if cookie == "":
+              raise RuntimeError("Missing required secret: CRAWL4NK_COOKIE")
+
+          keywords_raw = first_non_empty(
+              os.getenv("INPUT_KEYWORDS"),
+              os.getenv("VAR_KEYWORDS"),
+              os.getenv("DEFAULT_KEYWORDS"),
+          )
+          output_formats_raw = first_non_empty(
+              os.getenv("INPUT_OUTPUT_FORMATS"),
+              os.getenv("VAR_OUTPUT_FORMATS"),
+              os.getenv("DEFAULT_OUTPUT_FORMATS"),
+          )
+
+          max_pages_raw = first_non_empty(
+              os.getenv("INPUT_MAX_PAGES"),
+              os.getenv("VAR_MAX_PAGES"),
+              os.getenv("DEFAULT_MAX_PAGES"),
+          )
+          max_items_raw = first_non_empty(
+              os.getenv("INPUT_MAX_ITEMS_PER_KEYWORD"),
+              os.getenv("VAR_MAX_ITEMS_PER_KEYWORD"),
+              os.getenv("DEFAULT_MAX_ITEMS_PER_KEYWORD"),
+          )
+          fill_valid_quota_raw = first_non_empty(
+              os.getenv("INPUT_FILL_VALID_QUOTA"),
+              os.getenv("VAR_FILL_VALID_QUOTA"),
+              os.getenv("DEFAULT_FILL_VALID_QUOTA"),
+          )
+          search_page_strategy = first_non_empty(
+              os.getenv("INPUT_SEARCH_PAGE_STRATEGY"),
+              os.getenv("VAR_SEARCH_PAGE_STRATEGY"),
+              os.getenv("DEFAULT_SEARCH_PAGE_STRATEGY"),
+          )
+          best_first_frontload_pages_raw = first_non_empty(
+              os.getenv("INPUT_BEST_FIRST_FRONTLOAD_PAGES"),
+              os.getenv("VAR_BEST_FIRST_FRONTLOAD_PAGES"),
+              os.getenv("DEFAULT_BEST_FIRST_FRONTLOAD_PAGES"),
+          )
+          best_first_explore_stride_raw = first_non_empty(
+              os.getenv("INPUT_BEST_FIRST_EXPLORE_STRIDE"),
+              os.getenv("VAR_BEST_FIRST_EXPLORE_STRIDE"),
+              os.getenv("DEFAULT_BEST_FIRST_EXPLORE_STRIDE"),
+          )
+          fetch_comments_enabled_raw = first_non_empty(
+              os.getenv("INPUT_FETCH_COMMENTS_ENABLED"),
+              os.getenv("VAR_FETCH_COMMENTS_ENABLED"),
+              os.getenv("DEFAULT_FETCH_COMMENTS_ENABLED"),
+          )
+          include_comments_column_raw = first_non_empty(
+              os.getenv("INPUT_INCLUDE_COMMENTS_COLUMN"),
+              os.getenv("VAR_INCLUDE_COMMENTS_COLUMN"),
+              os.getenv("DEFAULT_INCLUDE_COMMENTS_COLUMN"),
+          )
+          company_must_in_list_raw = first_non_empty(
+              os.getenv("INPUT_COMPANY_MUST_IN_LIST"),
+              os.getenv("VAR_COMPANY_MUST_IN_LIST"),
+              os.getenv("DEFAULT_COMPANY_MUST_IN_LIST"),
+          )
+          streaming_process_enabled_raw = first_non_empty(
+              os.getenv("INPUT_STREAMING_PROCESS_ENABLED"),
+              os.getenv("VAR_STREAMING_PROCESS_ENABLED"),
+              os.getenv("DEFAULT_STREAMING_PROCESS_ENABLED"),
+          )
+          metrics_summary_log_raw = first_non_empty(
+              os.getenv("INPUT_METRICS_SUMMARY_LOG"),
+              os.getenv("VAR_METRICS_SUMMARY_LOG"),
+              os.getenv("DEFAULT_METRICS_SUMMARY_LOG"),
+          )
+          output_file = first_non_empty(
+              os.getenv("INPUT_OUTPUT_FILE"),
+              os.getenv("VAR_OUTPUT_FILE"),
+              os.getenv("DEFAULT_OUTPUT_FILE"),
+          )
+
+          cfg = {
+              "cookie": cookie,
+              "keywords": parse_list(keywords_raw, ["后端 面经"]),
+              "max_pages": parse_int(max_pages_raw, 5),
+              "max_items_per_keyword": parse_int(max_items_raw, 10),
+              "fill_valid_quota": parse_bool(fill_valid_quota_raw, False),
+              "search_page_strategy": search_page_strategy if search_page_strategy else "bfs",
+              "best_first_frontload_pages": parse_int(best_first_frontload_pages_raw, 3),
+              "best_first_explore_stride": parse_int(best_first_explore_stride_raw, 5),
+              "fetch_comments_enabled": parse_bool(fetch_comments_enabled_raw, False),
+              "include_comments_column": parse_bool(include_comments_column_raw, False),
+              "company_must_in_list": parse_bool(company_must_in_list_raw, True),
+              "streaming_process_enabled": parse_bool(streaming_process_enabled_raw, True),
+              "metrics_summary_log": parse_bool(metrics_summary_log_raw, False),
+              "output_file": output_file if output_file else "nowcoder_data",
+              "output_formats": parse_list(output_formats_raw, ["xlsx", "md", "txt"]),
+          }
+
+          with open("Crawl4NK/configs/app.json", "w", encoding="utf-8") as f:
+              json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+          print("Generated Crawl4NK/configs/app.json")
+          print(json.dumps(cfg, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Run Crawl4NK
+        id: crawl
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Crawl4NK
+          python main.py | tee ../crawl.log
+
+      - name: Collect crawl outputs
+        if: always()
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f crawl.log ]; then
+            tail -n 80 crawl.log > crawl_tail.log || true
+          else
+            touch crawl_tail.log
+          fi
+
+          if [ -d Crawl4NK/docs ]; then
+            find Crawl4NK/docs -type f \( -name "*.xlsx" -o -name "*.md" -o -name "*.txt" \) | sort > output_files.txt || true
+          else
+            : > output_files.txt
+          fi
+
+          file_count=$(grep -c . output_files.txt || true)
+          echo "OUTPUT_FILE_COUNT=${file_count}" >> "$GITHUB_ENV"
+
+          if [ "${file_count}" -gt 0 ]; then
+            echo "HAS_OUTPUT_FILES=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_OUTPUT_FILES=false" >> "$GITHUB_ENV"
+          fi
+
+          {
+            echo "OUTPUT_FILE_LIST<<EOF"
+            cat output_files.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "CRAWL_LOG_TAIL<<EOF"
+            cat crawl_tail.log
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload crawl outputs as artifact
+        if: always() && env.HAS_OUTPUT_FILES == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crawl4nk-output
+          path: |
+            Crawl4NK/docs
+            crawl.log
+          if-no-files-found: warn
+
+      - name: Set up Go
+        if: always()
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Send crawl result mail with Go
+        if: always()
+        shell: bash
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          CRAWL_STATUS: ${{ steps.crawl.outcome }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          OUTPUT_FILE_LIST: ${{ env.OUTPUT_FILE_LIST }}
+          OUTPUT_FILE_COUNT: ${{ env.OUTPUT_FILE_COUNT }}
+          CRAWL_LOG_TAIL: ${{ env.CRAWL_LOG_TAIL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SMTP_HOST:-}" ] || [ -z "${SMTP_PORT:-}" ] || [ -z "${SMTP_USERNAME:-}" ] || [ -z "${SMTP_PASSWORD:-}" ] || [ -z "${MAIL_FROM:-}" ] || [ -z "${MAIL_TO:-}" ]; then
+            echo "Missing required mail secrets."
+            echo "Please set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, MAIL_FROM, MAIL_TO in repository secrets."
+            exit 1
+          fi
+
+          cat > main.go << 'EOF'
+          package main
+
+          import (
+            "bufio"
+            "bytes"
+            "encoding/base64"
+            "fmt"
+            "io"
+            "mime"
+            "net/smtp"
+            "os"
+            "path/filepath"
+            "strings"
+            "time"
+          )
+
+          func mustGet(name string) string {
+            v := strings.TrimSpace(os.Getenv(name))
+            if v == "" {
+              panic("missing environment variable: " + name)
+            }
+            return v
+          }
+
+          func splitRecipients(raw string) []string {
+            var out []string
+            for _, m := range strings.Split(raw, ",") {
+              m = strings.TrimSpace(m)
+              if m != "" {
+                out = append(out, m)
+              }
+            }
+            return out
+          }
+
+          func splitLines(raw string) []string {
+            scanner := bufio.NewScanner(strings.NewReader(raw))
+            out := make([]string, 0)
+            for scanner.Scan() {
+              t := strings.TrimSpace(scanner.Text())
+              if t != "" {
+                out = append(out, t)
+              }
+            }
+            return out
+          }
+
+          func mimeTypeByName(name string) string {
+            ext := strings.ToLower(filepath.Ext(name))
+            switch ext {
+            case ".xlsx":
+              return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            case ".md":
+              return "text/markdown; charset=UTF-8"
+            case ".txt":
+              return "text/plain; charset=UTF-8"
+            default:
+              if t := mime.TypeByExtension(ext); t != "" {
+                return t
+              }
+              return "application/octet-stream"
+            }
+          }
+
+          func writeBase64WithWrap(w io.Writer, data []byte) {
+            encoded := base64.StdEncoding.EncodeToString(data)
+            for len(encoded) > 76 {
+              _, _ = io.WriteString(w, encoded[:76]+"\r\n")
+              encoded = encoded[76:]
+            }
+            if len(encoded) > 0 {
+              _, _ = io.WriteString(w, encoded+"\r\n")
+            }
+          }
+
+          func main() {
+            host := mustGet("SMTP_HOST")
+            port := mustGet("SMTP_PORT")
+            user := mustGet("SMTP_USERNAME")
+            pass := mustGet("SMTP_PASSWORD")
+            from := mustGet("MAIL_FROM")
+            to := splitRecipients(mustGet("MAIL_TO"))
+            if len(to) == 0 {
+              panic("MAIL_TO has no valid recipients")
+            }
+
+            status := strings.TrimSpace(os.Getenv("CRAWL_STATUS"))
+            if status == "" {
+              status = "unknown"
+            }
+            outputFiles := splitLines(os.Getenv("OUTPUT_FILE_LIST"))
+            outputCount := strings.TrimSpace(os.Getenv("OUTPUT_FILE_COUNT"))
+            logTail := strings.TrimSpace(os.Getenv("CRAWL_LOG_TAIL"))
+            if logTail == "" {
+              logTail = "(无日志输出)"
+            }
+
+            runURL := fmt.Sprintf(
+              "%s/%s/actions/runs/%s",
+              strings.TrimSpace(os.Getenv("GITHUB_SERVER_URL")),
+              strings.TrimSpace(os.Getenv("GITHUB_REPOSITORY")),
+              strings.TrimSpace(os.Getenv("GITHUB_RUN_ID")),
+            )
+
+            nowCN := time.Now().In(time.FixedZone("CST", 8*3600))
+            date := nowCN.Format("2006-01-02 Mon 15:04")
+
+            var lines []string
+            lines = append(lines, "Crawl4NK 定时任务结果：")
+            lines = append(lines, fmt.Sprintf("- 执行状态: %s", status))
+            lines = append(lines, fmt.Sprintf("- 产出文件数: %s", outputCount))
+            lines = append(lines, fmt.Sprintf("- Workflow 运行详情: %s", runURL))
+            if len(outputFiles) > 0 {
+              lines = append(lines, "")
+              lines = append(lines, "本次产出文件：")
+              for i, p := range outputFiles {
+                lines = append(lines, fmt.Sprintf("%d. %s", i+1, p))
+              }
+            }
+            lines = append(lines, "")
+            lines = append(lines, "日志尾部：")
+            lines = append(lines, logTail)
+            lines = append(lines, "")
+            lines = append(lines, "提示：邮件已尽量附带本次抓取结果文件，若附件过大请到 Actions Artifact 下载。")
+            lines = append(lines, fmt.Sprintf("发送时间（中国时区）：%s", date))
+
+            subject := fmt.Sprintf("[Crawl4NK %s] %s", strings.ToUpper(status), nowCN.Format("2006-01-02"))
+            body := strings.Join(lines, "\r\n")
+
+            boundary := fmt.Sprintf("BOUNDARY-%d", nowCN.UnixNano())
+
+            headers := []string{
+              "From: " + from,
+              "To: " + strings.Join(to, ", "),
+              "Subject: " + subject,
+              "MIME-Version: 1.0",
+              "Content-Type: multipart/mixed; boundary=" + boundary,
+            }
+
+            var msg bytes.Buffer
+            msg.WriteString(strings.Join(headers, "\r\n"))
+            msg.WriteString("\r\n\r\n")
+
+            msg.WriteString("--" + boundary + "\r\n")
+            msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+            msg.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+            msg.WriteString(body + "\r\n")
+
+            for _, p := range outputFiles {
+              p = strings.TrimSpace(p)
+              if p == "" {
+                continue
+              }
+
+              data, err := os.ReadFile(p)
+              if err != nil {
+                fmt.Printf("skip attachment (read failed): %s, err=%v\n", p, err)
+                continue
+              }
+
+              filename := filepath.Base(p)
+              msg.WriteString("--" + boundary + "\r\n")
+              msg.WriteString("Content-Type: " + mimeTypeByName(filename) + "\r\n")
+              msg.WriteString("Content-Transfer-Encoding: base64\r\n")
+              msg.WriteString("Content-Disposition: attachment; filename=\"" + filename + "\"\r\n\r\n")
+              writeBase64WithWrap(&msg, data)
+            }
+
+            msg.WriteString("--" + boundary + "--\r\n")
+
+            auth := smtp.PlainAuth("", user, pass, host)
+            addr := host + ":" + port
+            if err := smtp.SendMail(addr, auth, from, to, msg.Bytes()); err != nil {
+              panic(err)
+            }
+
+            fmt.Println("Crawl result mail sent successfully")
+          }
+          EOF
+
+          go run main.go
