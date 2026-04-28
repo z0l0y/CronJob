@@ -35,3 +35,11 @@ Optional repository variables:
 - `CRAWL4NK_OUTPUT_FORMATS`
 
 The workflow also supports manual trigger (`workflow_dispatch`) with temporary input overrides.
+
+## Schedule
+
+GitHub Actions schedules run in UTC and can be delayed. This workflow is configured to run at
+00:00 China Standard Time (UTC+8) using `0 16 * * *` in the cron expression.
+
+If you need an immediate run or want to validate the workflow, use the manual trigger in the
+Actions UI.
